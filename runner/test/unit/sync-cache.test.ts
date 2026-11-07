@@ -467,6 +467,10 @@ test('a thread deleted while running is gone from the file, so it does not come 
 test('a preview moving alone waits; anything else takes it along straight away', async () => {
   const s = setup();
   const t = s.h.runner.create({ text: 'one', cwd: s.h.cfg.defaults.cwd, accountId: 'claude-3' }).thread;
+  // The thread's patches are read from the disk after create: on a busy
+  // Mac (the full suite) that thread.updated came once the clock had
+  // moved on, and the row's write with it, so the hold below never began.
+  await s.h.runner.patchesIdle();
   const sync = s.make();
   sync.start();
   await settle();
