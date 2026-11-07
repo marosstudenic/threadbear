@@ -244,7 +244,10 @@ test('a reply whose session.send fails is recovered after restart', async () => 
   h.runner.respondReview(thread.id,review.id,0,{pickedId:'A',notes:{}});
   await tick();
   assert.equal(h.store.load(thread.id)?.reviewDeliveries,undefined);
-  const again=h.restart();await tick();
+  const again=h.restart();
+  // The resend follows the restart's async reads (patch trust, folders),
+  // so wait for it rather than a fixed few ticks: three weren't always enough.
+  for (let i=0;i<200&&!again.adapter.last?.sent.length;i++) await tick();
   assert.match(again.adapter.last.sent[0].text,/Picked A/);
   assert.deepEqual(again.store.load(thread.id)?.reviewDeliveries,[review.id]);
 });
