@@ -876,7 +876,10 @@ folder. A button can run a command, like your tests, send the agent a
 message you use a lot, or open a web page in your browser (App Store
 Connect, say), without adding anything to the thread. The web page
 buttons show on the iPhone too, over the message box, and open there. A panel can show a web page, such as your app
-running on localhost, or a list.
+running on localhost, or a list. A list's rows can come in sections:
+click a section's heading to fold it away, and again to bring it back.
+Threadbear remembers what you've folded in each list, so it stays folded
+when the list refreshes and the next time you open it.
 
 Buttons sit on shelves along the top edge of the message box, one shelf
 for each place they came from, starting with the same badge the panels

@@ -894,6 +894,12 @@ enum Automation {
                 if name == "expand" { app.collapsedHighlights.remove(key) } else { app.collapsedHighlights.insert(key) }
                 return "ok"
             }
+            if let section = c["panelSection"] as? String, let panel = c["panel"] as? String {
+                // A list panel's heading, as clicking it does: its title, with or without the count.
+                let key = panel + "\n" + PanelItem.foldKey(section)
+                if name == "expand" { app.collapsedPanelSections.remove(key) } else { app.collapsedPanelSections.insert(key) }
+                return "ok"
+            }
             if let raw = c["scheduleSection"] as? String {
                 // A Scheduled heading, as clicking it does.
                 guard let section = ScheduleSection(rawValue: raw) else {

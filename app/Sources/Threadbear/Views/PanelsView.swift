@@ -1121,10 +1121,15 @@ private struct ListPanel: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         let reserves = items.contains { ListPanel.icon($0) != nil }
-                        let headings = PanelItem.headings(items)
+                        // Folded by section title, without its count, so a
+                        // refresh every 15 seconds doesn't open it again.
+                        let lines = PanelItem.lines(items) { app.collapsedPanelSections.contains(Self.foldKey(panel, $0)) }
                         ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                            if let heading = headings[index] { SectionHeading(title: heading) }
-                            row(item, reservesIcon: reserves)
+                            let line = lines[index]
+                            if let heading = line.heading {
+                                SectionHeading(title: heading, fold: line.key.map { fold($0, line) })
+                            }
+                            if !line.folded { row(item, reservesIcon: reserves) }
                         }
                     }
                     .padding(.vertical, zoomed(8))
@@ -1143,6 +1148,22 @@ private struct ListPanel: View {
                 if Task.isCancelled { return }
                 render = result ?? PanelRender(note: "Not connected to the runner.")
                 try? await Task.sleep(for: .seconds(15))
+            }
+        }
+    }
+
+    /// What a section's fold is remembered by, in `collapsedPanelSections`.
+    static func foldKey(_ panel: Panel, _ section: String) -> String {
+        panel.id + "\n" + section
+    }
+
+    private func fold(_ key: String, _ line: PanelItem.Line) -> SectionFold {
+        let stored = Self.foldKey(panel, key)
+        // A title that ends in its own count ("Portal · 142") needn't say it twice.
+        let count = line.heading.map { PanelItem.foldKey($0) == $0 } == true ? line.count : 0
+        return SectionFold(collapsed: line.folded, count: count) {
+            withAnimation(.snappy(duration: 0.2)) {
+                if line.folded { app.collapsedPanelSections.remove(stored) } else { app.collapsedPanelSections.insert(stored) }
             }
         }
     }

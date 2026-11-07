@@ -489,6 +489,12 @@ final class AppModel {
     var collapsedHighlights: Set<String> = AppModel.storedCollapsedHighlights() {
         didSet { UserDefaults.standard.set(collapsedHighlights.sorted(), forKey: Self.collapsedHighlightsKey) }
     }
+    /// List panels' folded section headings, as `ListPanel.foldKey`:
+    /// the panel's id and the section's title without its count, so a fold
+    /// lasts through the list's refreshes, other threads and launches.
+    var collapsedPanelSections: Set<String> = Set(UserDefaults.standard.stringArray(forKey: AppModel.collapsedPanelSectionsKey) ?? []) {
+        didSet { UserDefaults.standard.set(collapsedPanelSections.sorted(), forKey: Self.collapsedPanelSectionsKey) }
+    }
     /// The Inbox section's order, from the sort menu on its heading,
     /// remembered across launches.
     var inboxOrder: InboxOrder = InboxOrder(rawValue: UserDefaults.standard.string(forKey: AppModel.inboxOrderKey) ?? "") ?? .needsYou {
@@ -603,6 +609,7 @@ final class AppModel {
     static func storedCollapsedHighlights(_ defaults: UserDefaults = .standard) -> Set<String> {
         Set(defaults.stringArray(forKey: collapsedHighlightsKey) ?? [])
     }
+    static let collapsedPanelSectionsKey = "collapsedPanelSections"
     static let inboxOrderKey = "inboxOrder"
     /// The error banner text shown for a connection problem, so it can be
     /// cleared when the connection comes back.

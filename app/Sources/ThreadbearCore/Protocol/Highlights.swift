@@ -265,4 +265,36 @@ extension PanelItem {
             return section
         }
     }
+    /// What a section's fold is remembered by: its title without a count
+    /// at the end, so "Portal · 142" stays folded when it becomes "Portal · 143".
+    public static func foldKey(_ section: String) -> String {
+        guard let range = section.range(of: #"\s*·\s*\d+$"#, options: .regularExpression) else { return section }
+        let key = String(section[..<range.lowerBound])
+        return key.isEmpty ? section : key
+    }
+
+    /// One row of a list panel as drawn: the heading over it (if any), with
+    /// the rows under that heading counted, and whether its section is folded.
+    public struct Line: Equatable, Sendable {
+        public var heading: String?
+        /// The row's section's fold key, nil for a row with no section.
+        public var key: String?
+        /// For a heading, the rows under it up to the next heading; else 0.
+        public var count: Int
+        /// The row is hidden, its section folded (its heading still shows).
+        public var folded: Bool
+    }
+
+    public static func lines(_ items: [PanelItem], isFolded: (String) -> Bool) -> [Line] {
+        let heads = headings(items)
+        var lines: [Line] = []
+        var headingAt: Int?
+        for (index, item) in items.enumerated() {
+            let key = item.section.flatMap { $0.isEmpty ? nil : foldKey($0) }
+            if heads[index] != nil { headingAt = index } else if key == nil { headingAt = nil }
+            lines.append(Line(heading: heads[index], key: key, count: 0, folded: key.map(isFolded) ?? false))
+            if let headingAt { lines[headingAt].count += 1 }
+        }
+        return lines
+    }
 }

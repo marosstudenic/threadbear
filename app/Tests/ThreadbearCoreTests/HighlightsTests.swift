@@ -255,6 +255,34 @@ final class ListPanelTests: XCTestCase {
         XCTAssertEqual(PanelItem.headings(items), ["Waiting · 1", "Shipped · 2", nil, nil, "Shipped · 2"])
     }
 
+    func testASectionsFoldKeyLeavesOutItsCount() {
+        XCTAssertEqual(PanelItem.foldKey("Portal · 142"), "Portal")
+        XCTAssertEqual(PanelItem.foldKey("Portal · 7"), "Portal")
+        XCTAssertEqual(PanelItem.foldKey("Risk State ·28"), "Risk State")
+        XCTAssertEqual(PanelItem.foldKey("Pinned"), "Pinned")
+        // Only a count at the very end goes.
+        XCTAssertEqual(PanelItem.foldKey("Sprint 12 · Portal"), "Sprint 12 · Portal")
+        XCTAssertEqual(PanelItem.foldKey("Q4 2026"), "Q4 2026")
+    }
+
+    func testAFoldedSectionKeepsItsHeadingAndHidesItsRows() {
+        let items = [
+            PanelItem(title: "a", section: "Pinned"),
+            PanelItem(title: "b", section: "Portal · 2"),
+            PanelItem(title: "c", section: "Portal · 2"),
+            PanelItem(title: "loose"),
+            PanelItem(title: "d", section: "Portal · 2"),
+        ]
+        let lines = PanelItem.lines(items) { $0 == "Portal" }
+        XCTAssertEqual(lines.map(\.heading), ["Pinned", "Portal · 2", nil, nil, "Portal · 2"])
+        XCTAssertEqual(lines.map(\.key), ["Pinned", "Portal", "Portal", nil, "Portal"])
+        // Each heading counts the rows under it, up to the next heading.
+        XCTAssertEqual(lines.map(\.count), [1, 2, 0, 0, 1])
+        XCTAssertEqual(lines.map(\.folded), [false, true, true, false, true])
+        // Nothing folded: every row shows.
+        XCTAssertEqual(PanelItem.lines(items) { _ in false }.map(\.folded), [false, false, false, false, false])
+    }
+
     func testRailIcons() {
         XCTAssertEqual(PanelIcon.symbol(for: Panel(id: "convex.dashboard", title: "Convex")), "cylinder.split.1x2")
         XCTAssertEqual(PanelIcon.symbol(for: Panel(id: "xcode.simulator", title: "Simulator", kind: .image)), "iphone")
