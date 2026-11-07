@@ -357,6 +357,25 @@ test('panels that share a title name their folders, the thread\'s own included, 
   assert.deepEqual((await loadPatchSet(own, home)).panels.map((p) => p.title), ['Convex']);
 });
 
+test('a url panel\'s {cwd} is the thread\'s own folder, encoded, without touching the cached patch', async () => {
+  const home = tmpDir();
+  const panelPatch = `export default { panels: [{ title: "Terminal", url: "http://127.0.0.1:7681/t/?arg={cwd}&x={cwd}" }, { title: "Docs", url: "http://localhost:4000/{other}" }] };`;
+  writePatch(path.join(home, '.threadbear/patches'), 'terminal.ts', panelPatch);
+  const cache = new Map();
+  const a = project(home, 'dev/a b');
+  const b = project(home, 'dev/b');
+  const setA = await loadPatchSet(a, home, cache);
+  const setB = await loadPatchSet(b, home, cache);
+  assert.equal(setA.panels[0].url, `http://127.0.0.1:7681/t/?arg=${encodeURIComponent(a)}&x=${encodeURIComponent(a)}`);
+  assert.equal(setB.panels[0].url, `http://127.0.0.1:7681/t/?arg=${encodeURIComponent(b)}&x=${encodeURIComponent(b)}`);
+  // Other placeholders, and urls without one, are left as written.
+  assert.equal(setA.panels[1].url, 'http://localhost:4000/{other}');
+  // The cached module's panel still has the placeholder, so the next
+  // folder gets its own.
+  const again = await loadPatchSet(a, home, cache);
+  assert.equal(again.panels[0].url, setA.panels[0].url);
+});
+
 test("a thread inside a project's folder keeps its own patches as they were", async () => {
   const home = tmpDir();
   const app = project(home, 'dev/app', { convex: null, 'package.json': '{}' });

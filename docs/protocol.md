@@ -2363,7 +2363,11 @@ nothing added to the transcript; exactly one of the three. Use `url`,
 not `run: "open https://..."`, for a link: that leaves an `action.run` in
 the transcript on every press. A panel needs a
 `url` with a scheme, or an `items` function, which makes it a `list`
-panel: rows drawn natively, with no page to serve.
+panel: rows drawn natively, with no page to serve. `{cwd}` in a panel's
+`url` is replaced with the thread's own folder (its worktree, when it
+has one), percent-encoded, so a home patch can give each thread a page
+for its folder: `url: "http://127.0.0.1:7681/?arg={cwd}"`. Other braces
+are left as written.
 
 ```ts
   panels: [{

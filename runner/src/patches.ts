@@ -146,7 +146,19 @@ export async function loadPatchSet(
     }
   }
   nameClashingPanels(set, cwd);
+  fillPanelFolder(set, cwd);
   return set;
+}
+
+// `{cwd}` in a url panel's url is the thread's own folder (its worktree
+// when it has one), percent-encoded, so one home patch can give every
+// thread a page for its folder (a terminal opened there). New objects:
+// the cached module's panels keep the placeholder for the next folder.
+function fillPanelFolder(set: PatchSet, cwd: string): void {
+  const folder = encodeURIComponent(path.resolve(cwd));
+  set.panels = set.panels.map((panel) =>
+    panel.kind === 'url' && panel.url?.includes('{cwd}') ? { ...panel, url: panel.url.replaceAll('{cwd}', folder) } : panel,
+  );
 }
 
 // Reads, off the event loop, what loadPatchSet's walk will ask dirs for:
