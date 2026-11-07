@@ -486,6 +486,11 @@ struct GroupHeader: View {
         .padding(.trailing, 6)
         .frame(height: options.headerHeight)
         .padding(.leading, leading)
+        // Never wider than the group, even when its tabs at their shortest
+        // are: the rest is cut off at the group's edge rather than widening
+        // the group past its slot.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .clipped()
         .background(alignment: .leading) {
             if movesWindow && leading > 0 {
                 WindowSpace().frame(width: leading)
@@ -731,12 +736,12 @@ private struct TabItem: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.primary.opacity(selected && !single ? 0.07 : (hovering ? 0.04 : 0)))
         )
-        // Full titles: the empty bar beside them gives way first. A panel
-        // on its own still shortens a title (a long file name in the
-        // pane) that wouldn't fit beside its buttons: the bar grew past
-        // the panel and took the content with it, clipped at the edge.
-        .fixedSize(horizontal: !single, vertical: false)
-        .layoutPriority(single ? 1 : 0)
+        // Full titles: the empty bar beside them gives way first (it has
+        // the lower priority), and only then do the titles shorten. Tabs
+        // that never shortened made the bar wider than a narrow group, and
+        // the panel's content was centred in that, under whatever was to
+        // the right (a list panel's rows under Threadbear's rail, 7 Nov).
+        .layoutPriority(1)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { controller.select(panel) }
