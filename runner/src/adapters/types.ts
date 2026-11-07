@@ -13,6 +13,7 @@ import type {
   PermissionMode,
   Provider,
   Question,
+  SlashCommand,
   SubagentStatus,
   TurnErrorKind,
   TurnOutcome,
@@ -197,7 +198,18 @@ export interface AgentSession {
   end(opts?: { hard?: boolean }): Promise<void>;
   // Hard stop: kills the CLI's process group.
   kill(): void;
+  // The commands a message can start with, as the live CLI has them now
+  // (docs/protocol.md, "Slash commands"). Optional: Codex leaves it out.
+  commands?(): Promise<SlashCommand[]>;
 }
+
+// Where to look for a thread's commands when it has no live session.
+export type CommandsRequest = {
+  account: Account;
+  cwd: string;
+  // As StartSessionOptions: the folder's settings without the parts that run.
+  untrustedProjectSettings?: Record<string, unknown>;
+};
 
 // Cutting a native session back to just before one of the runner's
 // messages (docs/protocol.md, "Editing a message"). The thread's CLI is
@@ -253,4 +265,6 @@ export interface AgentAdapter {
   // the files the CLI checkpointed since, where it can. Throws
   // RewindRefusedError when the session doesn't have the message.
   rewind?(req: RewindRequest): Promise<RewindResult>;
+  // The commands a session in that folder would have, without starting one.
+  commands?(req: CommandsRequest): Promise<SlashCommand[]>;
 }

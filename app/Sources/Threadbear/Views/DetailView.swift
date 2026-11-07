@@ -96,6 +96,8 @@ struct DetailView: View {
                 if subagentRef == nil {
                     ComposerView(thread: thread, session: session, controller: app.transcript)
                         .tourTarget(.composer)
+                        // Its `/` menu floats over the views around it.
+                        .zIndex(1)
                         .layoutValue(key: PaneRole.self, value: .composer)
                 }
                 if isNew {

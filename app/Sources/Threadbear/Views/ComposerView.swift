@@ -20,11 +20,25 @@ struct ComposerView: View {
     @State private var height: CGFloat = ComposerTextField.minHeight
     @State private var importing = 0
     @State private var handle = ComposerHandle()
+    @State private var slashMenu = SlashMenuModel()
 
     static var cornerRadius: CGFloat { zoomed(20) }
     static var padding: CGFloat { zoomed(14) }
 
     private var draftKey: String { thread?.id ?? "new" }
+
+    /// Which list the `/` menu shows: the thread's, or a new thread's in
+    /// its folder on its login.
+    private var slashMenuKey: String {
+        if let thread { return "t:\(thread.id)" }
+        return "n:\(app.newThreadRunnerId ?? "")|\(app.newThreadCwd ?? app.draftLogins.defaults.cwd)|\(app.newThreadAccountId)"
+    }
+
+    private func setUpSlashMenu() {
+        slashMenu.key = slashMenuKey
+        let threadId = thread?.id
+        slashMenu.fetch = { [app] in await app.slashCommands(threadId: threadId) }
+    }
 
     var body: some View {
         // Normalized, so a picture added from outside the box (an ask's
@@ -91,7 +105,8 @@ struct ComposerView: View {
                 pictures: ComposerTextView.Pictures(allowed: { picturesAllowed() }, importOne: { await importPicture($0) }),
                 handle: handle,
                 onEscape: { cancelEdit() },
-                editable: !creating
+                editable: !creating,
+                slashMenu: slashMenu
             )
             .frame(height: height)
             .opacity(creating ? 0.5 : 1)
@@ -108,6 +123,18 @@ struct ComposerView: View {
         .padding(Self.padding)
         }
         .background { card(attention: needsYou) }
+        // The `/` menu, floating just over a thread's box, or under a new
+        // thread's, which sits mid-window under its heading (SlashCommandMenu).
+        .overlay(alignment: thread == nil ? .bottomLeading : .topLeading) {
+            if slashMenu.isShown {
+                let gap = SlashCommandMenu.height(rows: slashMenu.rows.count) + zoomed(8)
+                SlashCommandMenu(model: slashMenu) { command in
+                    if let textView = handle.textView { slashMenu.pick(command, in: textView) }
+                }
+                .offset(y: thread == nil ? gap : -gap)
+            }
+        }
+        .task(id: slashMenuKey) { setUpSlashMenu() }
         }
         // The transcript's reading column: 780 wide at most at 100%,
         // centred, with the same side insets once the window is narrower.
@@ -381,6 +408,8 @@ struct ComposerTextField: NSViewRepresentable {
     var onEscape: () -> Bool = { false }
     /// False while what's in it is being sent (a new thread being made).
     var editable = true
+    /// The `/` menu, fed the words and caret, and given keys first.
+    var slashMenu: SlashMenuModel?
 
     // Computed, so they follow the zoom (`applyTypeScale` re-applies
     // them to a text view that's already up).
@@ -454,6 +483,7 @@ struct ComposerTextField: NSViewRepresentable {
         textView.onReturnWhenEmpty = onReturnWhenEmpty
         textView.pictures = pictures
         textView.onEscape = onEscape
+        textView.onMenuKey = slashMenu.map { menu in { [weak textView] event in textView.map { menu.key(event, in: $0) } ?? false } }
         textView.placeholder = placeholder
         handle?.textView = textView
         if textView.isEditable != editable { textView.isEditable = editable }
@@ -507,6 +537,25 @@ struct ComposerTextField: NSViewRepresentable {
             guard let textView else { return }
             parent.draft = textView.draftNow
             updateHeight()
+            updateMenu()
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            updateMenu()
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            MainActor.assumeIsolated {
+                parent.slashMenu?.update(text: textView?.string ?? "", selection: NSRange(location: 0, length: 0), focused: false)
+            }
+        }
+
+        /// The `/` menu follows the words and caret while the box has focus.
+        func updateMenu() {
+            MainActor.assumeIsolated {
+                guard let textView, let menu = parent.slashMenu else { return }
+                menu.update(text: textView.string, selection: textView.selectedRange(), focused: textView.window?.firstResponder === textView)
+            }
         }
 
         func updateHeight() {
@@ -529,6 +578,8 @@ final class ComposerTextView: NSTextView {
     var onSend: (() -> Void)?
     var onReturnWhenEmpty: (() -> Bool)?
     var onEscape: (() -> Bool)?
+    /// The `/` menu's keys (Up, Down, Return, Tab, Esc), while it's shown.
+    var onMenuKey: ((NSEvent) -> Bool)?
     /// Pictures pasted or dropped in an ask's box, which keeps them beside
     /// its words (AskAnswerBox). The composer sets `pictures` instead.
     var onImages: (([URL]) -> Void)?
@@ -689,6 +740,7 @@ final class ComposerTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         hoverChip(nil)
+        if onMenuKey?(event) == true { return }
         let isReturn = event.keyCode == 36 || event.keyCode == 76
         if isReturn, !hasMarkedText() {
             if event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option) {

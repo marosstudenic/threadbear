@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
-import type { HookInput, McpServerConfig, ModelInfo, Options, PermissionResult, Query, SDKUserMessage, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
-import type { Account, EffortLevel, ModelChoice, PermissionMode, Question } from '../../protocol.ts';
+import type { HookInput, McpServerConfig, ModelInfo, Options, SlashCommand as SdkSlashCommand, PermissionResult, Query, SDKUserMessage, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { Account, EffortLevel, ModelChoice, PermissionMode, Question, SlashCommand } from '../../protocol.ts';
 import { isEffortLevel } from '../../protocol.ts';
 import fs from 'node:fs';
-import type { AgentAdapter, AgentSession, RewindRequest, RewindResult, SessionSink, StartSessionOptions, UserInput } from '../types.ts';
+import type { AgentAdapter, AgentSession, CommandsRequest, RewindRequest, RewindResult, SessionSink, StartSessionOptions, UserInput } from '../types.ts';
 import { RewindRefusedError } from '../types.ts';
 import { cutPointBefore, sessionTranscriptPath } from '../../transcripts.ts';
 import type { Logger } from '../../log.ts';
@@ -160,6 +160,40 @@ export class ClaudeAdapter implements AgentAdapter {
     }
   }
 
+  // The commands a session in the folder would have (docs/protocol.md,
+  // "Slash commands"), from a CLI started there with no prompt, as models()
+  // does. Its settings are the ones a session would start with, but with no
+  // hooks, tools or MCP servers, so looking runs nothing of the folder's.
+  async commands(req: CommandsRequest): Promise<SlashCommand[]> {
+    const { deps } = this;
+    const never = { async *[Symbol.asyncIterator]() { await new Promise<never>(() => {}); } } as AsyncIterable<SDKUserMessage>;
+    const abort = new AbortController();
+    const untrusted = req.untrustedProjectSettings;
+    const sources = untrusted ? untrustedSettings(req.cwd, untrusted) : { settingSources: ['user', 'project', 'local'] as Options['settingSources'] };
+    const options: Options = {
+      cwd: req.cwd,
+      pathToClaudeCodeExecutable: deps.claudePath,
+      env: { ...cliEnv(req.account), ...(untrusted ? { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' } : {}) },
+      ...sources,
+      settings: { ...((sources as { settings?: Record<string, unknown> }).settings ?? {}), disableAllHooks: true },
+      tools: [],
+      strictMcpConfig: true,
+      abortController: abort,
+      spawnClaudeCodeProcess: groupSpawner(deps.registry, deps.log, () => {}, `commands:${req.account.id}`),
+    };
+    const q = (deps.queryFn ?? sdkQuery)({ prompt: never, options });
+    try {
+      return visibleCommands(await q.supportedCommands());
+    } finally {
+      try {
+        q.close();
+      } catch {
+        // already closed
+      }
+      abort.abort();
+    }
+  }
+
   // An edit of an earlier message (docs/protocol.md, "Editing a message").
   // The conversation is cut by the next start (resumeAt); here the
   // transcript says where, and a CLI started on the session with no turn
@@ -229,6 +263,37 @@ export class ClaudeAdapter implements AgentAdapter {
 // settings, which sit above user settings as project ones do.
 export function untrustedSettings(cwd: string, settings: Record<string, unknown>): Pick<Options, 'settingSources' | 'settings' | 'additionalDirectories'> {
   return { settingSources: ['user'], additionalDirectories: [cwd], ...(Object.keys(settings).length ? { settings } : {}) };
+}
+
+// Claude Code's own commands that are for its terminal (/color, /focus),
+// change what the app has its own controls for (/model, /effort, /clear,
+// /rename), or show a screen the app doesn't draw (/usage, /context). Its
+// other built-ins are skills (/code-review, /loop, /simplify) or prompts
+// (/init, /compact) and work from a message like any skill. The CLI marks
+// both kinds `builtin`, so these are named.
+const TERMINAL_BUILTINS = new Set([
+  'add-dir', 'advisor', 'agents', 'auto-mode-setup', 'autocompact', 'bug', 'clear', 'color', 'config', 'context', 'cost',
+  'design', 'design-consent', 'design-revoke', 'effort', 'exit', 'export', 'extra-usage', 'fast', 'feedback', 'focus', 'goal',
+  'heapdump', 'help', 'hooks', 'ide', 'import', 'insights', 'install-github-app', 'list-agents', 'login', 'logout', 'mcp',
+  'memory', 'model', 'output-style', 'permissions', 'plugin', 'plugins', 'privacy-settings', 'recap', 'release-notes',
+  'reload-plugins', 'reload-skills', 'rename', 'resume', 'skill-doctor', 'stats', 'status', 'statusline', 'team-onboarding',
+  'terminal-setup', 'theme', 'upgrade', 'usage', 'usage-credits', 'vim', 'workflow-launch-exec',
+]);
+
+// The CLI's list as the menu shows it (docs/protocol.md, "Slash commands").
+export function visibleCommands(rows: readonly (SdkSlashCommand & { builtin?: boolean })[]): SlashCommand[] {
+  const out: SlashCommand[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const name = typeof row?.name === 'string' ? row.name.replace(/^\//, '').trim() : '';
+    if (!name || name.startsWith('__') || /\s/.test(name) || seen.has(name)) continue;
+    if (row.builtin === true && TERMINAL_BUILTINS.has(name)) continue;
+    seen.add(name);
+    const cmd: SlashCommand = { name, description: typeof row.description === 'string' ? row.description.trim() : '' };
+    if (typeof row.argumentHint === 'string' && row.argumentHint.trim()) cmd.argumentHint = row.argumentHint.trim();
+    out.push(cmd);
+  }
+  return out;
 }
 
 // The CLI's rows as the protocol's ModelChoice. The "default" row stands
@@ -537,6 +602,11 @@ class ClaudeSession implements AgentSession {
   async interrupt(): Promise<void> {
     if (this.exited) return;
     await (this.q.interrupt as (opts?: { cancelQueued?: boolean }) => Promise<unknown>)({ cancelQueued: true });
+  }
+
+  async commands(): Promise<SlashCommand[]> {
+    if (this.exited) return [];
+    return visibleCommands(await this.q.supportedCommands());
   }
 
   async setModel(model: string | undefined): Promise<void> {

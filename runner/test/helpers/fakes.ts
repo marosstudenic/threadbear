@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentAdapter, AgentSession, SessionSink, StartSessionOptions, UserInput, AdapterOutput, TurnResult, RewindRequest, RewindResult } from '../../src/adapters/types.ts';
-import type { Account, EffortLevel, ModelChoice, PermissionMode, Provider } from '../../src/protocol.ts';
+import type { AgentAdapter, AgentSession, SessionSink, StartSessionOptions, UserInput, AdapterOutput, TurnResult, RewindRequest, RewindResult, CommandsRequest } from '../../src/adapters/types.ts';
+import type { Account, EffortLevel, ModelChoice, PermissionMode, Provider, SlashCommand } from '../../src/protocol.ts';
 import type { Config } from '../../src/config.ts';
 import { ensureHome } from '../../src/config.ts';
 import { ThreadStore } from '../../src/store.ts';
@@ -52,6 +52,8 @@ export class FakeSession implements AgentSession {
   }
   // Only on an adapter that moves folders (FakeAdapter sets it up).
   setCwd?: (cwd: string) => Promise<void>;
+  // Set by a test of the slash menu: the live CLI's list.
+  commands?: () => Promise<SlashCommand[]>;
   async end(opts: { hard?: boolean } = {}): Promise<void> {
     this.ended = true;
     this.endedHard = Boolean(opts.hard);
@@ -101,6 +103,8 @@ export class FakeAdapter implements AgentAdapter {
   slowExit = false;
   // Set by a test that wants the runner's model probe to find something.
   models?: (account: Account) => Promise<ModelChoice[]>;
+  // Set by a test of the slash menu: the list a CLI in the folder reports.
+  commands?: (req: CommandsRequest) => Promise<SlashCommand[]>;
   archived: { accountId: string; nativeSessionId: string }[] = [];
   archive?: (account: Account, nativeSessionId: string) => Promise<void>;
   // Set by a test of editing a message; `rewound` keeps what it was asked.

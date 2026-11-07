@@ -48,7 +48,7 @@ import type {
   TurnOutcome,
 } from './protocol.ts';
 import { agentsStillWorking, ErrorCode, LIMITS, PROTOCOL_VERSION, RpcError, sentByAgent } from './protocol.ts';
-import type { ArchivedBy, ArchiveVerdict, LibrarianStatus, Project, Schedule } from './protocol.ts';
+import type { ArchivedBy, ArchiveVerdict, LibrarianStatus, Project, Schedule, SlashCommand } from './protocol.ts';
 import { Projects } from './projects.ts';
 import type { Settings } from './settings.ts';
 import type {
@@ -493,6 +493,8 @@ const DELTA_INTERVAL_MS = 33; // at most ~30 delta flushes a second per thread
 const INTERRUPT_GRACE_MS = 10_000;
 // How long notices from startup are shown to clients that connect later.
 const STARTUP_NOTICE_MS = 10 * 60_000;
+// How long a folder's list of slash commands is kept (slashCommands).
+const COMMANDS_TTL_MS = 60_000;
 // How long a finished background task keeps the thread counted as busy
 // while the CLI gets round to its own turn (usually well under a second).
 const WAKE_GRACE_MS = 15_000;
@@ -568,6 +570,8 @@ export class Runner {
   // as often as the folders are (claudePatchInfo).
   claudeChecks = new Map<string, { at: number; verdict: ClaudeVerdict }>();
   threads = new Map<string, ThreadState>();
+  // Slash command lists by login, folder and trust; `at` once one has come.
+  private commandLists = new Map<string, { list: Promise<SlashCommand[]>; at?: number }>();
   listeners = new Set<(n: Notification) => void>();
   dirty = new Set<string>();
   flushScheduled = false;
@@ -2600,6 +2604,56 @@ export class Runner {
 
   saidNothing(rec: ThreadRecord): boolean {
     return rec.needs?.needs === 'nothing' && rec.needs.seq === rec.lastTurnCompletedSeq;
+  }
+
+  // What a message in the thread (or a new one in cwd) can start with
+  // (docs/protocol.md, "Slash commands"): the live session's list, or one a
+  // CLI started in the folder reports, kept a minute by login, folder and
+  // trust, and asked for once however many want it.
+  async slashCommands(p: { threadId: string } | { cwd: string; accountId?: string }): Promise<{ commands: SlashCommand[] }> {
+    let cwd: string;
+    let accountId: string;
+    if ('threadId' in p) {
+      const { rec, rt } = this.mustGet(p.threadId);
+      cwd = rec.cwd;
+      accountId = rec.accountId;
+      if (rt.session?.commands && !rt.closing) {
+        try {
+          return { commands: await rt.session.commands() };
+        } catch (e) {
+          this.log.warn('could not list the session\'s commands', { threadId: rec.id, error: String(e) });
+        }
+      }
+    } else {
+      cwd = p.cwd;
+      accountId = p.accountId ?? this.defaultAccountId();
+    }
+    const account = this.accounts.get(accountId);
+    const adapter = account ? this.adapters[account.provider] : undefined;
+    if (!account || !adapter?.commands || !isDirectory(cwd)) return { commands: [] };
+    const claude = account.provider === 'claude' ? this.patchTrust.checkClaude(cwd) : undefined;
+    const untrusted = claude && !claude.trusted ? claude.hash : undefined;
+    const key = `${account.id}\n${cwd}\n${untrusted ?? ''}`;
+    const now = Date.now();
+    for (const [k, v] of this.commandLists) if (v.at && now - v.at > COMMANDS_TTL_MS) this.commandLists.delete(k);
+    let entry = this.commandLists.get(key);
+    if (!entry) {
+      const pending = adapter
+        .commands({ account, cwd, ...(untrusted ? { untrustedProjectSettings: claudeSettingsWithoutCommands(cwd) } : {}) })
+        .then((list) => {
+          const e = this.commandLists.get(key);
+          if (e) e.at = Date.now();
+          return list;
+        })
+        .catch((e) => {
+          this.commandLists.delete(key);
+          this.log.warn('could not list commands', { cwd, accountId: account.id, error: String(e) });
+          return [] as SlashCommand[];
+        });
+      entry = { list: pending };
+      this.commandLists.set(key, entry);
+    }
+    return { commands: await entry.list };
   }
 
   markSeen(threadId: string, seq: number): { thread: ThreadSummary } {

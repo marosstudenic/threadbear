@@ -103,6 +103,7 @@ runner, app and phone; it's usually better to hide its entry point.
 | Secrets (`ask_secret` and its card) | `runner/src/secrets.ts`, `runner/src/runner/approvals.ts` (`requestSecret`, `answerSecret`), the tool in `threadbear-mcp.ts`; app `Transcript/Cells.swift` (the card); phone `Threadbear/SecretCard.swift`, `ThreadbearKit/Secrets.swift`; `convex/phone.ts` (`secret`). Leave the tool out of `buildThreadbearTools` to switch it off. |
 | Highlights and `pin` | `runner/src/highlights.ts`; app `Views/HighlightsView.swift`, `HighlightsBoard.swift` |
 | Folder browser in the side pane | `Views/FolderBrowser.swift`, `ThreadbearCore/Threads/FolderListing.swift`; `files.list` in `runner/src/files.ts` |
+| The `/` menu in the message box (Slash commands in docs/protocol.md) | `threads.commands` in `runner/src/runner.ts` (`slashCommands`), `commands()` and `visibleCommands` in `runner/src/adapters/claude/adapter.ts`; app `Views/SlashCommandMenu.swift`, `ThreadbearCore/Threads/SlashCommands.swift`. Leaving `slashMenu` off the composer's text field hides it. |
 | First-run tour and sample threads | app `Views/Tour.swift`, `runner/src/samples.ts`, `app/Tools/tour-e2e.mjs`. It only runs once, for a new user. |
 
 ## 3. Worked example: taking Pocket out

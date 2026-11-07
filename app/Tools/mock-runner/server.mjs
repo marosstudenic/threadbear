@@ -978,6 +978,25 @@ async function dispatch(client, method, p) {
       if (p.question) return { answer: `About "${sel}": ${p.question} That's the mock runner's answer to a follow-up.`, model: 'mock' };
       return { answer: `**${sel}** is what the agent called this step. It means the smallest piece to move first, so the rest can follow.\n\n- It's in \`runner/src/explain.ts\`\n- Nothing here goes into the thread`, model: 'mock' };
     }
+    case 'threads.commands': {
+      // docs/protocol.md, "Slash commands": a made-up list, none for Codex.
+      const t = p.threadId ? need(p.threadId) : null;
+      if (t && (t.summary.provider === 'codex' || String(t.summary.accountId ?? '').startsWith('codex'))) return { commands: [] };
+      return {
+        commands: [
+          { name: 'grilling', description: 'Grill the user relentlessly about a plan, decision, or idea.' },
+          { name: 'review', description: 'Review the changes since a fixed point along two axes: standards and spec.', argumentHint: '<since>' },
+          { name: 'to-issues', description: 'Break a plan, spec, or PRD into independently-grabbable issues.' },
+          { name: 'code-review', description: 'Review the current diff for correctness bugs.', argumentHint: '[low|medium|high] [target]' },
+          { name: 'simplify', description: 'Review the changed code for reuse, simplification and efficiency, then apply the fixes.' },
+          { name: 'dataviz', description: 'Use this skill whenever you are about to create any chart, graph, plot or dashboard.' },
+          { name: 'topturbo-city-page:topturbo-city-page', description: '(topturbo-city-page) Builds a city landing page end to end.' },
+          { name: 'compact', description: 'Free up context by summarizing the conversation so far', argumentHint: '<optional custom summarization instructions>' },
+          { name: 'init', description: 'Initialize a new CLAUDE.md file with codebase documentation' },
+          { name: 'security-review', description: 'Complete a security review of the pending changes on the current branch' },
+        ],
+      };
+    }
     case 'threads.highlights': {
       const t = need(p.threadId);
       return highlights.get(t.summary.id) ?? { highlights: [], edited: [] };

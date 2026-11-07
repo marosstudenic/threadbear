@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { ClaudeAdapter, alwaysAllow, modelChoices, sdkPermissionMode, terminalMcpTools } from '../../src/adapters/claude/adapter.ts';
+import { ClaudeAdapter, alwaysAllow, modelChoices, sdkPermissionMode, terminalMcpTools, visibleCommands } from '../../src/adapters/claude/adapter.ts';
 import type { SessionSink, AdapterOutput, ToolApprovalRequest } from '../../src/adapters/types.ts';
 import { ProcessRegistry } from '../../src/proc.ts';
 import { nullLogger } from '../../src/log.ts';
@@ -29,7 +29,7 @@ test('"Always allow" keeps only allow rules, scoped to the session', () => {
 // A stand-in for the SDK's query(): records the options and the messages
 // sent, and lets the test call canUseTool.
 function fakeQuery() {
-  const state: { options?: any; sent: any[]; flags: unknown[]; models?: any[]; close?: () => void; frame?: (f: unknown) => Promise<void> } = { sent: [], flags: [] };
+  const state: { options?: any; sent: any[]; flags: unknown[]; models?: any[]; commands?: any[]; close?: () => void; frame?: (f: unknown) => Promise<void> } = { sent: [], flags: [] };
   const fn = ((args: { prompt: AsyncIterable<any>; options: any }) => {
     state.options = args.options;
     let stop!: () => void;
@@ -65,6 +65,7 @@ function fakeQuery() {
         state.flags.push(s);
       },
       initializationResult: async () => ({ models: state.models ?? [] }),
+      supportedCommands: async () => state.commands ?? [],
       close: () => stop(),
     };
   }) as any;
@@ -229,6 +230,62 @@ test("models() asks a promptless CLI for its picker; the 'default' row is left o
   assert.deepEqual(state.options.tools, []);
   assert.equal(state.options.env.CLAUDE_CONFIG_DIR, dir);
   assert.deepEqual(modelChoices([{ value: '', displayName: '' } as never]), []);
+});
+
+// docs/protocol.md, "Slash commands".
+test("the slash menu keeps skills, commands and built-in skills, not the terminal's own commands", () => {
+  assert.deepEqual(
+    visibleCommands([
+      { name: 'grilling', description: ' Grill the user. ', argumentHint: '' },
+      { name: 'review', description: 'Review changes', argumentHint: ' <since> ' },
+      { name: 'egm:egm-review', description: '(EGM) Review' },
+      { name: 'model', description: 'Set the model', argumentHint: '<model>', builtin: true },
+      { name: 'compact', description: 'Free up context', argumentHint: '<instructions>', builtin: true },
+      { name: 'loop', description: 'Run on an interval', argumentHint: '[interval] [prompt]', builtin: true },
+      { name: 'color', description: 'Set the prompt bar color', builtin: true },
+      { name: '__remote-workflow', description: 'Server only', builtin: true },
+      { name: '__hidden', description: 'x' },
+      { name: 'grilling', description: 'a second row with the same name' },
+      { name: '', description: 'no name' },
+      { name: 'two words', description: 'not typeable' },
+    ] as never),
+    [
+      { name: 'grilling', description: 'Grill the user.' },
+      { name: 'review', description: 'Review changes', argumentHint: '<since>' },
+      { name: 'egm:egm-review', description: '(EGM) Review' },
+      { name: 'compact', description: 'Free up context', argumentHint: '<instructions>' },
+      { name: 'loop', description: 'Run on an interval', argumentHint: '[interval] [prompt]' },
+    ],
+  );
+});
+
+test('commands() asks a promptless CLI in the folder, with no hooks, tools or MCP servers', async () => {
+  const { fn, state } = fakeQuery();
+  state.commands = [{ name: 'grilling', description: 'Grill', argumentHint: '' }, { name: 'clear', description: 'Clear', builtin: true }];
+  const dir = tmpDir();
+  const adapter = new ClaudeAdapter({ claudePath: '/nonexistent', registry: new ProcessRegistry(dir, nullLogger), log: nullLogger, queryFn: fn });
+  const account = { id: 'claude-3', provider: 'claude' as const, title: 'x', configDir: dir };
+  assert.deepEqual(await adapter.commands({ account, cwd: '/work/proj' }), [{ name: 'grilling', description: 'Grill' }]);
+  assert.equal(state.options.cwd, '/work/proj');
+  assert.deepEqual(state.options.settingSources, ['user', 'project', 'local']);
+  assert.deepEqual(state.options.settings, { disableAllHooks: true });
+  assert.deepEqual(state.options.tools, []);
+  assert.equal(state.options.strictMcpConfig, true);
+  assert.equal(state.options.mcpServers, undefined);
+  assert.equal(state.options.env.CLAUDE_CONFIG_DIR, dir);
+  // An untrusted folder: only the user's settings, and the folder's without the parts that run.
+  await adapter.commands({ account, cwd: '/work/proj', untrustedProjectSettings: { model: 'opus' } });
+  assert.deepEqual(state.options.settingSources, ['user']);
+  assert.deepEqual(state.options.settings, { model: 'opus', disableAllHooks: true });
+  assert.deepEqual(state.options.additionalDirectories, ['/work/proj']);
+  assert.equal(state.options.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD, '1');
+});
+
+test("a live session's commands come from its CLI", async () => {
+  const { session, state } = start();
+  state.commands = [{ name: 'to-issues', description: 'Make issues', argumentHint: '[plan]' }, { name: 'color', description: 'Colour', builtin: true }];
+  assert.deepEqual(await session.commands!(), [{ name: 'to-issues', description: 'Make issues', argumentHint: '[plan]' }]);
+  state.close!();
 });
 
 test('thread rules go to the CLI as allowedTools; messages carry the turn id', async () => {

@@ -105,6 +105,13 @@ File references are where to look.
   Claude Code and Codex versions and installs them. If you don't point it
   at your own Codex, it installs one into the data folder.
   `THREADBEAR_CLI_UPDATES=off` stops this.
+- **Slash command lists** (`slashCommands` in `runner/src/runner.ts`):
+  when you type `/` at the start of a message in a thread whose Claude
+  isn't running, it starts `claude` in that thread's folder with no
+  prompt, asks which commands it has, and closes it, well under a
+  second and no tokens. That CLI runs no hooks, tools or MCP servers,
+  and only the folder settings a session there would load. It keeps
+  the answer for a minute.
 - **Small model calls** (`runner/src/models/`): thread titles, filing
   threads into projects (the librarian, every 5 minutes) and similar jobs
   send short excerpts of your threads to `claude -p` on your own logins.

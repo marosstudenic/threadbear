@@ -25,6 +25,13 @@ export function isEffortLevel(v: unknown): v is EffortLevel {
 
 // One row of a CLI's model picker: `id` is what to send as a thread's model,
 // `model` the full id it runs as.
+// A command a message can start with (docs/protocol.md, "Slash commands").
+export type SlashCommand = {
+  name: string;
+  description: string;
+  argumentHint?: string;
+};
+
 export type ModelChoice = {
   id: string;
   model: string;

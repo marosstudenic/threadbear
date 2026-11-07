@@ -2,6 +2,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import type { Duplex } from 'node:stream';
+import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Runner, Notification, CliControl } from './runner.ts';
 import type { Logger } from './log.ts';
@@ -61,6 +62,7 @@ const THREAD_METHODS = new Set([
   'threads.subscribe',
   'threads.markSeen',
   'threads.highlights',
+  'threads.commands',
   'threads.explain',
   'threads.hibernateWhen',
   'threads.removeHighlight',
@@ -609,6 +611,12 @@ export class RpcServer {
         return r.markSeen(reqString(p, 'threadId'), reqNumber(p, 'seq'));
       case 'threads.highlights':
         return r.highlights(reqString(p, 'threadId'));
+      case 'threads.commands': {
+        if (typeof p.threadId === 'string') return r.slashCommands({ threadId: p.threadId });
+        const cwd = reqString(p, 'cwd');
+        if (!path.isAbsolute(cwd)) throw bad(`cwd must be absolute: ${cwd}`);
+        return r.slashCommands({ cwd, ...(typeof p.accountId === 'string' ? { accountId: p.accountId } : {}) });
+      }
       case 'threads.explain': {
         const selection = reqString(p, 'selection');
         if (!selection.trim()) throw bad('selection is empty');

@@ -307,6 +307,15 @@ Any other file you paste or drop in (a video, a PDF, a folder) goes in as
 its full path where you drop it, for the agent to open where it is.
 Nothing's copied, so a big one is fine.
 
+Type `/` at the start of a message to see what you can start it with:
+your skills, your plugins' commands, the folder's own commands, and
+Claude Code's own skills such as `/code-review` or `/loop`, each with
+what it does. Keep typing to narrow the list, use Up and Down to move,
+and Return or Tab to put it in the box, then write the rest of the
+message after it. Esc closes the list. A message that starts with
+`/grilling` runs that skill, as it would in Claude Code. Codex threads
+don't have the list.
+
 Paste a thread's id (Copy thread id in its ... menu) and it goes in as a
 chip with that thread's title. The agent gets a `thread:<id>` link it can
 read the thread from, and clicking the chip once it's sent opens that

@@ -625,6 +625,9 @@ export class Relay {
       }
       case 'threads.subagent':
         return this.unsupported(w, "Reading a sub-agent's work");
+      // Not through Convex: the box shows no menu (Slash commands).
+      case 'threads.commands':
+        return { commands: [] };
       default:
         return this.unsupported(w, describe(method));
     }

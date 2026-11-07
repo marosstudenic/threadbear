@@ -433,6 +433,14 @@ enum Automation {
         case "escape":
             // The Escape key, where the cursor is.
             return pressAtCursor(window, characters: "\u{1b}", keyCode: 53)
+        case "arrow":
+            // Up, Down or Tab where the cursor is (the composer's `/` menu).
+            switch c["key"] as? String {
+            case "up": return pressAtCursor(window, characters: "\u{F700}", keyCode: 126)
+            case "down": return pressAtCursor(window, characters: "\u{F701}", keyCode: 125)
+            case "tab": return pressAtCursor(window, characters: "\t", keyCode: 48)
+            default: return "error key is up, down or tab"
+            }
         case "rename":
             // No title: the open thread's title becomes a field, as a click
             // does. With one: saves it, as Return in that field does.
