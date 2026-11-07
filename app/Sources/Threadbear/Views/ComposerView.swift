@@ -773,7 +773,9 @@ final class ComposerTextView: NSTextView {
             let others = urls.filter { !isImage($0) }
             var at = range
             if !others.isEmpty { at = insertPaths(others, replacing: range) }
-            if !images.isEmpty { deliver(images, at: at) }
+            // Copied out now, while the drag lets this app read them: a
+            // screenshot thumbnail's file is one the runner can't open.
+            if !images.isEmpty { deliver(images.map { DroppedPictures.readable($0) }, at: at) }
             return true
         }
         // Text with an image flavour (rich text from a browser) stays text.
@@ -786,7 +788,7 @@ final class ComposerTextView: NSTextView {
             png = NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:])
         }
         guard let png else { return false }
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("threadbear-paste", isDirectory: true)
+        let folder = DroppedPictures.folder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent("pasted-\(UUID().uuidString.prefix(8)).png")
         do {

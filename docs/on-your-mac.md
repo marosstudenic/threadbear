@@ -56,6 +56,10 @@ File references are where to look.
   `~/Library/Caches/Threadbear/update`;
   `~/Library/Caches/Threadbear/remote` (copies of pictures and files from
   threads on your other Macs, at most 512 MB, unused ones go after 30 days);
+  `threadbear-paste` in the app's temp folder (a screenshot pasted from the
+  clipboard, or dragged from macOS's floating thumbnail, saved there for the
+  runner to copy in, since it can't open the thumbnail's own file; macOS
+  clears the temp folder);
   `~/Library/Logs/threadbear-runner.log` and `threadbear-update.log`;
   `~/Library/Logs/Threadbear/hangs` (the last 10 times the app froze: if its
   main thread is stuck for 4 seconds it runs macOS's `sample` on itself, in
