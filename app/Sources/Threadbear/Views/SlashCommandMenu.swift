@@ -10,98 +10,123 @@ import ThreadbearCore
 @MainActor
 @Observable
 final class SlashMenuModel {
-    /// The list for the box's thread or new thread, as the runner last said.
-    private(set) var commands: [SlashCommand] = []
     /// The rows on show, best match first.
     private(set) var rows: [SlashCommand] = []
-    var selected = 0
-    /// The `/word` being typed, while there is one.
-    private(set) var token: NSRange?
-    /// The words when Esc closed it (or a row was picked), so it stays shut
-    /// until they change.
+    private(set) var selected = 0
+    /// Whether a `/word` is being typed in the focused box.
+    private(set) var typing = false
+    /// Esc closed it (or a row was picked) for these words, so it stays
+    /// shut until they change.
     private var shutFor: String?
-    private var text = ""
-    private var lastQuery: String?
-    @ObservationIgnored private var loading: Task<Void, Never>?
-    @ObservationIgnored private var loadedAt: Date?
-    @ObservationIgnored private var loadedFor: String?
-    /// Asks the runner; set by the composer, for its thread or new thread.
-    @ObservationIgnored var fetch: (() async -> [SlashCommand])?
-    /// Which list `fetch` gets: a different one starts afresh.
-    @ObservationIgnored var key = ""
+    @ObservationIgnored private var text = ""
+    @ObservationIgnored private var query = ""
+    /// Moved with Up or Down since the rows last changed: Return then takes
+    /// the row even if it only matched on its description.
+    @ObservationIgnored private var moved = false
+    /// Each thread's (or new thread's) list, as the runner last said.
+    @ObservationIgnored private var lists: [String: (at: Date, commands: [SlashCommand])] = [:]
+    @ObservationIgnored private var fetching: Set<String> = []
+    @ObservationIgnored private var fetch: (() async -> [SlashCommand]?)?
+    @ObservationIgnored private(set) var key = ""
 
-    var isShown: Bool { token != nil && !rows.isEmpty && shutFor != text }
+    var isShown: Bool { typing && !rows.isEmpty && shutFor != text }
+
+    /// Which list it shows, and how to get it. Set as the box is drawn, before
+    /// its words are, so another thread's list never shows for a moment.
+    func configure(key: String, fetch: @escaping () async -> [SlashCommand]?) {
+        self.fetch = fetch
+        guard key != self.key else { return }
+        self.key = key
+        // Not while SwiftUI is drawing: rows are observed.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.key == key else { return }
+            self.refilter()
+            if self.typing { self.load() }
+        }
+    }
 
     func update(text: String, selection: NSRange, focused: Bool) {
         self.text = text
         let found = focused ? SlashMenu.token(in: text, selection: selection) : nil
-        if found == nil { shutFor = nil }
-        let was = token.map { (text as NSString).length >= NSMaxRange($0) ? (text as NSString).substring(with: $0) : "" }
-        token = found?.range
+        if found == nil, shutFor != nil { shutFor = nil }
+        let started = found != nil && !typing
+        if typing != (found != nil) { typing = found != nil }
         guard let found else {
-            rows = []
-            lastQuery = nil
+            if !rows.isEmpty { rows = [] }
             return
         }
-        // A fresh `/` asks again if the list is old or for another thread.
-        if was == nil { load() }
-        filter(found.query)
+        if started || found.query != query {
+            query = found.query
+            refilter()
+        }
+        // A fresh `/` asks again if the list is old.
+        if started { load() }
     }
 
-    /// Typing narrows it from the best match; a list coming in, or the
-    /// caret moving, keeps the row picked where it can.
-    private func filter(_ query: String) {
-        let keep = query == lastQuery && rows.indices.contains(selected) ? rows[selected].name : nil
-        lastQuery = query
-        rows = SlashMenu.matches(commands, query: query)
-        selected = keep.flatMap { name in rows.firstIndex { $0.name == name } } ?? 0
+    private func refilter() {
+        let fresh = typing ? SlashMenu.matches(lists[key]?.commands ?? [], query: query) : []
+        let keep = rows.indices.contains(selected) ? rows[selected].name : nil
+        if fresh != rows {
+            rows = fresh
+            moved = false
+            let index = keep.flatMap { name in fresh.firstIndex { $0.name == name } } ?? 0
+            selected = query.isEmpty ? index : 0
+        } else if !rows.indices.contains(selected) {
+            selected = 0
+        }
     }
 
     private func load() {
-        guard let fetch else { return }
-        if loadedFor == key, let loadedAt, Date().timeIntervalSince(loadedAt) < 30 { return }
-        if loadedFor != key { commands = [] }
-        loading?.cancel()
+        guard let fetch, !fetching.contains(key) else { return }
+        if let cached = lists[key], Date().timeIntervalSince(cached.at) < 30 { return }
         let key = key
-        loading = Task { [weak self] in
+        fetching.insert(key)
+        Task { [weak self] in
             let list = await fetch()
-            guard let self, !Task.isCancelled, self.key == key else { return }
-            self.commands = list
-            self.loadedAt = Date()
-            self.loadedFor = key
-            if let token = self.token, (self.text as NSString).length >= NSMaxRange(token) {
-                let word = (self.text as NSString).substring(with: NSRange(location: 1, length: token.length - 1))
-                self.filter(word)
-            }
+            guard let self else { return }
+            self.fetching.remove(key)
+            // A failed ask (no connection yet) isn't kept: the next `/` asks again.
+            guard let list else { return }
+            self.lists[key] = (Date(), list)
+            if self.key == key { self.refilter() }
         }
     }
 
     func move(_ by: Int) {
         guard !rows.isEmpty else { return }
         selected = (selected + by + rows.count) % rows.count
+        moved = true
     }
 
     func shut() { shutFor = text }
 
     /// Puts the picked command in place of the `/word` (one undo step).
-    func pick(_ command: SlashCommand, in textView: NSTextView) {
-        guard let token, (textView.string as NSString).length >= NSMaxRange(token) else { return }
-        let replacement = SlashMenu.replacement(for: command, in: textView.string, token: token)
-        textView.insertText(replacement, replacementRange: token)
-        shutFor = textView.string
+    /// False when the box no longer starts with one.
+    @discardableResult
+    func pick(_ command: SlashCommand, in textView: NSTextView) -> Bool {
+        guard let token = SlashMenu.token(in: textView.string, selection: textView.selectedRange()) else { return false }
+        let replacement = SlashMenu.replacement(for: command, in: textView.string, token: token.range)
         textView.window?.makeFirstResponder(textView)
+        textView.insertText(replacement, replacementRange: token.range)
+        shutFor = textView.string
+        return true
     }
 
-    /// A key while it's shown: true if the menu took it.
+    /// A key while it's shown: true if the menu took it. Return takes a row
+    /// that matches by name, or one moved to; otherwise (a whole name typed,
+    /// or only a description matching) it sends as before.
     func key(_ event: NSEvent, in textView: NSTextView) -> Bool {
-        guard isShown, !textView.hasMarkedText() else { return false }
+        guard isShown, !textView.hasMarkedText(), rows.indices.contains(selected) else { return false }
         let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let row = rows[selected]
         switch event.keyCode {
         case 126 where mods.isEmpty: move(-1)
         case 125 where mods.isEmpty: move(1)
-        case 36, 76, 48:
-            guard mods.isEmpty, rows.indices.contains(selected) else { return false }
-            pick(rows[selected], in: textView)
+        case 48 where mods.isEmpty:
+            return pick(row, in: textView)
+        case 36 where mods.isEmpty, 76 where mods.isEmpty:
+            guard moved || SlashMenu.picksOnReturn(row, query: query) else { return false }
+            return pick(row, in: textView)
         case 53: shut()
         default: return false
         }
@@ -198,20 +223,24 @@ private struct SlashCommandRow: View {
 
 extension AppModel {
     /// What a message in the thread (or the next new thread) can start with
-    /// `/` for. Empty when the runner can't say: an older one, Codex, a new
-    /// thread on another runner, or no connection.
-    func slashCommands(threadId: String?) async -> [SlashCommand] {
+    /// `/` for. Empty when there's none to have: an older runner, Codex, a
+    /// new thread on another runner.
+    /// Nil when it couldn't ask (no connection yet), so the menu asks again.
+    func slashCommands(threadId: String?) async -> [SlashCommand]? {
         do {
             if let threadId {
-                guard let client = client(for: threadId) else { return [] }
+                guard let client = client(for: threadId) else { return nil }
                 return try await client.slashCommands(threadId: threadId)
             }
+            guard newThreadRunnerId == nil else { return [] }
             let cwd = newThreadCwd ?? draftLogins.defaults.cwd
-            guard newThreadRunnerId == nil, let client, !cwd.isEmpty else { return [] }
+            guard let client, !cwd.isEmpty else { return nil }
             return try await client.slashCommands(cwd: cwd, accountId: newThreadAccountId)
+        } catch let RPCError.server(code, _) where code == RPCError.methodNotFound {
+            return []
         } catch {
             AppLog.write("slash", "no commands: \(error)")
-            return []
+            return nil
         }
     }
 }

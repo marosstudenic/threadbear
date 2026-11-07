@@ -182,9 +182,16 @@ export class ClaudeAdapter implements AgentAdapter {
       spawnClaudeCodeProcess: groupSpawner(deps.registry, deps.log, () => {}, `commands:${req.account.id}`),
     };
     const q = (deps.queryFn ?? sdkQuery)({ prompt: never, options });
+    let timer: NodeJS.Timeout | undefined;
     try {
-      return visibleCommands(await q.supportedCommands());
+      // A CLI that never answers (stuck signing in or syncing plugins)
+      // mustn't hold the list up for good: the runner asks again next time.
+      const late = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`no answer in ${COMMANDS_PROBE_MS / 1000}s`)), COMMANDS_PROBE_MS);
+      });
+      return visibleCommands(await Promise.race([q.supportedCommands(), late]));
     } finally {
+      clearTimeout(timer);
       try {
         q.close();
       } catch {
@@ -265,6 +272,9 @@ export function untrustedSettings(cwd: string, settings: Record<string, unknown>
   return { settingSources: ['user'], additionalDirectories: [cwd], ...(Object.keys(settings).length ? { settings } : {}) };
 }
 
+// How long a look at a folder's commands waits for the CLI.
+export const COMMANDS_PROBE_MS = 10_000;
+
 // Claude Code's own commands that are for its terminal (/color, /focus),
 // change what the app has its own controls for (/model, /effort, /clear,
 // /rename), or show a screen the app doesn't draw (/usage, /context). Its
@@ -281,13 +291,19 @@ const TERMINAL_BUILTINS = new Set([
 ]);
 
 // The CLI's list as the menu shows it (docs/protocol.md, "Slash commands").
+// Where rows share a name, the one marked builtin is what /name runs (the
+// SDK's SlashCommand), so it's the one listed, and a terminal one hides the
+// name altogether. A CLI that marks no rows at all gets the names filtered.
 export function visibleCommands(rows: readonly (SdkSlashCommand & { builtin?: boolean })[]): SlashCommand[] {
+  const nameOf = (row: { name?: unknown }) => (typeof row?.name === 'string' ? row.name.replace(/^\//, '').trim() : '');
+  const marks = rows.some((r) => r?.builtin === true);
+  const builtins = new Set(rows.filter((r) => r?.builtin === true || (!marks && TERMINAL_BUILTINS.has(nameOf(r)))).map(nameOf));
   const out: SlashCommand[] = [];
   const seen = new Set<string>();
   for (const row of rows) {
-    const name = typeof row?.name === 'string' ? row.name.replace(/^\//, '').trim() : '';
+    const name = nameOf(row);
     if (!name || name.startsWith('__') || /\s/.test(name) || seen.has(name)) continue;
-    if (row.builtin === true && TERMINAL_BUILTINS.has(name)) continue;
+    if (builtins.has(name) && (TERMINAL_BUILTINS.has(name) || (marks && row.builtin !== true))) continue;
     seen.add(name);
     const cmd: SlashCommand = { name, description: typeof row.description === 'string' ? row.description.trim() : '' };
     if (typeof row.argumentHint === 'string' && row.argumentHint.trim()) cmd.argumentHint = row.argumentHint.trim();

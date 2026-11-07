@@ -495,6 +495,8 @@ const INTERRUPT_GRACE_MS = 10_000;
 const STARTUP_NOTICE_MS = 10 * 60_000;
 // How long a folder's list of slash commands is kept (slashCommands).
 const COMMANDS_TTL_MS = 60_000;
+// How long a live session gets to say its commands before a look instead.
+const LIVE_COMMANDS_MS = 3_000;
 // How long a finished background task keeps the thread counted as busy
 // while the CLI gets round to its own turn (usually well under a second).
 const WAKE_GRACE_MS = 15_000;
@@ -2617,11 +2619,25 @@ export class Runner {
       const { rec, rt } = this.mustGet(p.threadId);
       cwd = rec.cwd;
       accountId = rec.accountId;
-      if (rt.session?.commands && !rt.closing) {
+      // Not a CLI the next message replaces (deliver): its list would be
+      // the old folder's, login's or trust's.
+      const replaced =
+        rt.closing ||
+        rt.releaseWhenIdle ||
+        rec.handoff ||
+        (rt.versionMove && rt.tasks.length === 0) ||
+        (rec.provider === 'claude' && Boolean(rt.claudeSkipped) === this.patchTrust.checkClaude(rec.cwd).trusted);
+      if (rt.session?.commands && !replaced) {
+        let timer: NodeJS.Timeout | undefined;
         try {
-          return { commands: await rt.session.commands() };
+          const late = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('no answer')), LIVE_COMMANDS_MS);
+          });
+          return { commands: await Promise.race([rt.session.commands(), late]) };
         } catch (e) {
           this.log.warn('could not list the session\'s commands', { threadId: rec.id, error: String(e) });
+        } finally {
+          clearTimeout(timer);
         }
       }
     } else {
@@ -2634,19 +2650,18 @@ export class Runner {
     const claude = account.provider === 'claude' ? this.patchTrust.checkClaude(cwd) : undefined;
     const untrusted = claude && !claude.trusted ? claude.hash : undefined;
     const key = `${account.id}\n${cwd}\n${untrusted ?? ''}`;
-    const now = Date.now();
+    const now = this.clock.now();
     for (const [k, v] of this.commandLists) if (v.at && now - v.at > COMMANDS_TTL_MS) this.commandLists.delete(k);
     let entry = this.commandLists.get(key);
     if (!entry) {
       const pending = adapter
         .commands({ account, cwd, ...(untrusted ? { untrustedProjectSettings: claudeSettingsWithoutCommands(cwd) } : {}) })
         .then((list) => {
-          const e = this.commandLists.get(key);
-          if (e) e.at = Date.now();
+          if (this.commandLists.get(key) === entry) entry!.at = this.clock.now();
           return list;
         })
         .catch((e) => {
-          this.commandLists.delete(key);
+          if (this.commandLists.get(key) === entry) this.commandLists.delete(key);
           this.log.warn('could not list commands', { cwd, accountId: account.id, error: String(e) });
           return [] as SlashCommand[];
         });

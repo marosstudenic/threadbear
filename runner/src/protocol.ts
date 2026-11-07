@@ -23,8 +23,6 @@ export function isEffortLevel(v: unknown): v is EffortLevel {
   return typeof v === 'string' && (EFFORT_LEVELS as readonly string[]).includes(v);
 }
 
-// One row of a CLI's model picker: `id` is what to send as a thread's model,
-// `model` the full id it runs as.
 // A command a message can start with (docs/protocol.md, "Slash commands").
 export type SlashCommand = {
   name: string;
@@ -32,6 +30,8 @@ export type SlashCommand = {
   argumentHint?: string;
 };
 
+// One row of a CLI's model picker: `id` is what to send as a thread's model,
+// `model` the full id it runs as.
 export type ModelChoice = {
   id: string;
   model: string;

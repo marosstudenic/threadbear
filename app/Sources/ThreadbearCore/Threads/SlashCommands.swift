@@ -73,6 +73,17 @@ public enum SlashMenu {
         return ranked.map(\.command)
     }
 
+    /// Whether Return takes this row without it being moved to: when it
+    /// matches by name, and isn't just the whole name already typed (Return
+    /// then sends it as it is). A row matching only on its description
+    /// would otherwise swap a word Mike typed for an unrelated command.
+    public static func picksOnReturn(_ command: SlashCommand, query: String) -> Bool {
+        let q = query.lowercased()
+        let name = command.name.lowercased()
+        if q.isEmpty { return true }
+        return name != q && name.contains(q)
+    }
+
     /// What picking `command` puts in place of the token: `/name` and a
     /// space, unless the words after it already start with one.
     public static func replacement(for command: SlashCommand, in text: String, token: NSRange) -> String {

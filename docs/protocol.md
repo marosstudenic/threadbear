@@ -1639,8 +1639,13 @@ thread's folder with no prompt, as the model picker does (well under a
 second, no tokens), with the settings a session there would start with:
 an untrusted folder's settings without the parts that run (Trusting a
 folder's Claude Code hooks), and no hooks or MCP servers at all, so a
-look at the list never runs anything. It keeps each list for a minute,
-by login, folder and trust, and asks once for any number of callers.
+look at the list runs nothing of the folder's. It gives up after 10
+seconds (and asks again next time), keeps each list for a minute, by
+login, folder and trust, and asks once for any number of callers. A
+live session that the next message would replace (a new folder, login
+or trust) isn't asked, and one that hasn't answered in 3 seconds gives
+way to a look. Where the CLI lists two commands with one name, the one
+it marks `builtin` is the one `/name` runs, so that's the one listed.
 Claude Code's commands for its terminal (`/color`, `/focus`), for what
 the app has its own controls for (`/model`, `/effort`, `/clear`) and for
 screens the app doesn't draw (`/usage`, `/context`) are left out, by name

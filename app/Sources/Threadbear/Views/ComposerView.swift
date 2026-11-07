@@ -34,12 +34,6 @@ struct ComposerView: View {
         return "n:\(app.newThreadRunnerId ?? "")|\(app.newThreadCwd ?? app.draftLogins.defaults.cwd)|\(app.newThreadAccountId)"
     }
 
-    private func setUpSlashMenu() {
-        slashMenu.key = slashMenuKey
-        let threadId = thread?.id
-        slashMenu.fetch = { [app] in await app.slashCommands(threadId: threadId) }
-    }
-
     var body: some View {
         // Normalized, so a picture added from outside the box (an ask's
         // box, a schedule left behind) shows as a chip too.
@@ -106,7 +100,9 @@ struct ComposerView: View {
                 handle: handle,
                 onEscape: { cancelEdit() },
                 editable: !creating,
-                slashMenu: slashMenu
+                slashMenu: slashMenu,
+                slashMenuKey: slashMenuKey,
+                slashMenuFetch: { [app, threadId = thread?.id] in await app.slashCommands(threadId: threadId) }
             )
             .frame(height: height)
             .opacity(creating ? 0.5 : 1)
@@ -134,7 +130,6 @@ struct ComposerView: View {
                 .offset(y: thread == nil ? gap : -gap)
             }
         }
-        .task(id: slashMenuKey) { setUpSlashMenu() }
         }
         // The transcript's reading column: 780 wide at most at 100%,
         // centred, with the same side insets once the window is narrower.
@@ -408,8 +403,11 @@ struct ComposerTextField: NSViewRepresentable {
     var onEscape: () -> Bool = { false }
     /// False while what's in it is being sent (a new thread being made).
     var editable = true
-    /// The `/` menu, fed the words and caret, and given keys first.
+    /// The `/` menu, fed the words and caret, and given keys first, with
+    /// which thread's list it shows and how to get it.
     var slashMenu: SlashMenuModel?
+    var slashMenuKey = ""
+    var slashMenuFetch: (() async -> [SlashCommand]?)?
 
     // Computed, so they follow the zoom (`applyTypeScale` re-applies
     // them to a text view that's already up).
@@ -484,6 +482,9 @@ struct ComposerTextField: NSViewRepresentable {
         textView.pictures = pictures
         textView.onEscape = onEscape
         textView.onMenuKey = slashMenu.map { menu in { [weak textView] event in textView.map { menu.key(event, in: $0) } ?? false } }
+        textView.onFocusChange = { [weak coordinator = context.coordinator] in coordinator?.updateMenu() }
+        // Before the words: another thread's draft must meet its own list.
+        if let slashMenu, let slashMenuFetch { slashMenu.configure(key: slashMenuKey, fetch: slashMenuFetch) }
         textView.placeholder = placeholder
         handle?.textView = textView
         if textView.isEditable != editable { textView.isEditable = editable }
@@ -544,12 +545,6 @@ struct ComposerTextField: NSViewRepresentable {
             updateMenu()
         }
 
-        func textDidEndEditing(_ notification: Notification) {
-            MainActor.assumeIsolated {
-                parent.slashMenu?.update(text: textView?.string ?? "", selection: NSRange(location: 0, length: 0), focused: false)
-            }
-        }
-
         /// The `/` menu follows the words and caret while the box has focus.
         func updateMenu() {
             MainActor.assumeIsolated {
@@ -580,6 +575,20 @@ final class ComposerTextView: NSTextView {
     var onEscape: (() -> Bool)?
     /// The `/` menu's keys (Up, Down, Return, Tab, Esc), while it's shown.
     var onMenuKey: ((NSEvent) -> Bool)?
+    /// Focus coming or going, which shows or hides the `/` menu.
+    var onFocusChange: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { DispatchQueue.main.async { [weak self] in self?.onFocusChange?() } }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { DispatchQueue.main.async { [weak self] in self?.onFocusChange?() } }
+        return resigned
+    }
     /// Pictures pasted or dropped in an ask's box, which keeps them beside
     /// its words (AskAnswerBox). The composer sets `pictures` instead.
     var onImages: (([URL]) -> Void)?

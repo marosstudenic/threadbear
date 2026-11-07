@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { ClaudeAdapter, alwaysAllow, modelChoices, sdkPermissionMode, terminalMcpTools, visibleCommands } from '../../src/adapters/claude/adapter.ts';
+import { ClaudeAdapter, alwaysAllow, modelChoices, sdkPermissionMode, terminalMcpTools, visibleCommands, COMMANDS_PROBE_MS } from '../../src/adapters/claude/adapter.ts';
 import type { SessionSink, AdapterOutput, ToolApprovalRequest } from '../../src/adapters/types.ts';
 import { ProcessRegistry } from '../../src/proc.ts';
 import { nullLogger } from '../../src/log.ts';
@@ -257,6 +257,43 @@ test("the slash menu keeps skills, commands and built-in skills, not the termina
       { name: 'loop', description: 'Run on an interval', argumentHint: '[interval] [prompt]' },
     ],
   );
+});
+
+test('where rows share a name, the built-in one is listed, and a terminal one hides the name', () => {
+  assert.deepEqual(
+    visibleCommands([
+      { name: 'review', description: 'My own review' },
+      { name: 'review', description: 'Built-in review', builtin: true },
+      { name: 'model', description: 'A skill named model' },
+      { name: 'model', description: 'Set the model', builtin: true },
+    ] as never),
+    [{ name: 'review', description: 'Built-in review' }],
+  );
+  // A CLI that marks nothing: terminal names go by name.
+  assert.deepEqual(visibleCommands([{ name: 'clear', description: 'x' }, { name: 'grilling', description: 'y' }] as never), [{ name: 'grilling', description: 'y' }]);
+});
+
+test("commands() gives up on a CLI that doesn't answer, and closes it", async () => {
+  const { fn, state } = fakeQuery();
+  let closed = false;
+  const hung = ((args: any) => {
+    const q = fn(args);
+    return { ...q, supportedCommands: () => new Promise(() => {}), close: () => { closed = true; q.close(); } };
+  }) as any;
+  const dir = tmpDir();
+  const adapter = new ClaudeAdapter({ claudePath: '/nonexistent', registry: new ProcessRegistry(dir, nullLogger), log: nullLogger, queryFn: hung });
+  const account = { id: 'claude-3', provider: 'claude' as const, title: 'x', configDir: dir };
+  const { mock } = await import('node:test');
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const p = adapter.commands({ account, cwd: '/work/proj' });
+    mock.timers.tick(COMMANDS_PROBE_MS);
+    await assert.rejects(p, /no answer/);
+    assert.ok(closed);
+  } finally {
+    mock.timers.reset();
+  }
+  void state;
 });
 
 test('commands() asks a promptless CLI in the folder, with no hooks, tools or MCP servers', async () => {

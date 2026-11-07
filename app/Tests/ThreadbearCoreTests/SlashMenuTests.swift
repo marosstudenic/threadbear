@@ -49,6 +49,15 @@ final class SlashMenuTests: XCTestCase {
         XCTAssertEqual(SlashMenu.replacement(for: grill, in: "/gr my plan", token: NSRange(location: 0, length: 3)), "/grilling")
     }
 
+    func testReturnTakesANameMatchButNotAWholeNameOrADescriptionMatch() {
+        let api = SlashCommand(name: "claude-api", description: "Pick a model and call it")
+        XCTAssertTrue(SlashMenu.picksOnReturn(api, query: ""))
+        XCTAssertTrue(SlashMenu.picksOnReturn(api, query: "cla"))
+        XCTAssertTrue(SlashMenu.picksOnReturn(api, query: "API"))
+        XCTAssertFalse(SlashMenu.picksOnReturn(api, query: "model"), "only its description matches")
+        XCTAssertFalse(SlashMenu.picksOnReturn(api, query: "claude-api"), "typed in full: Return sends it")
+    }
+
     func testSummaryIsTheFirstLineCutShort() {
         XCTAssertEqual(SlashMenu.summary("  One line.  \nMore."), "One line.")
         XCTAssertEqual(SlashMenu.summary(String(repeating: "a", count: 200), limit: 10), "aaaaaaaaa…")

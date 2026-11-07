@@ -58,17 +58,12 @@ test('with no live session, one look in the folder serves everyone for a minute'
   await other;
   assert.equal(asked.length, 2);
   // A minute on, it looks again.
-  const realNow = Date.now;
-  Date.now = () => realNow() + 61_000;
-  try {
-    const again = h.runner.slashCommands({ cwd, accountId: 'claude-3' });
-    await tick();
-    answer([]);
-    assert.deepEqual(await again, { commands: [] });
-    assert.equal(asked.length, 3);
-  } finally {
-    Date.now = realNow;
-  }
+  h.clock.advance(61_000);
+  const again = h.runner.slashCommands({ cwd, accountId: 'claude-3' });
+  await tick();
+  answer([]);
+  assert.deepEqual(await again, { commands: [] });
+  assert.equal(asked.length, 3);
 });
 
 test('a failed look answers empty and is tried again next time', async () => {
@@ -107,4 +102,27 @@ test("an untrusted folder is looked at with its settings' running parts left out
   };
   await h.runner.slashCommands({ cwd: project, accountId: 'claude-3' });
   assert.deepEqual(asked[0].untrustedProjectSettings, { permissions: { allow: ['Bash(ls)'] } });
+});
+
+test("a live session the next message replaces isn't asked: its list is the old folder's or trust's", async () => {
+  const h = makeHarness();
+  const cwd = tmpDir();
+  const { thread } = h.runner.create({ text: 'hi', accountId: 'claude-3', cwd });
+  await tick();
+  h.adapter.commands = async () => [{ name: 'fresh', description: '' }];
+  h.adapter.last.commands = async () => [GRILL];
+  (h.runner.threads.get(thread.id)!.rt as { releaseWhenIdle?: boolean }).releaseWhenIdle = true;
+  assert.deepEqual(await h.runner.slashCommands({ threadId: thread.id }), { commands: [{ name: 'fresh', description: '' }] });
+});
+
+test("a live session that doesn't answer in time gives way to a look", async () => {
+  const h = makeHarness();
+  const cwd = tmpDir();
+  const { thread } = h.runner.create({ text: 'hi', accountId: 'claude-3', cwd });
+  await tick();
+  h.adapter.commands = async () => [GRILL];
+  h.adapter.last.commands = () => new Promise(() => {});
+  const started = Date.now();
+  assert.deepEqual(await h.runner.slashCommands({ threadId: thread.id }), { commands: [GRILL] });
+  assert.ok(Date.now() - started < 5_000);
 });
