@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { once } from 'node:events';
+import { Worker } from 'node:worker_threads';
 import { escapeDestinations, findStep, readLink } from '../../../web/src/thread-links.ts';
 
 test('escapes the destinations agents write, so they parse as links', () => {
@@ -65,13 +67,46 @@ test('words found nowhere in the turn find nothing', () => {
   assert.equal(findStep('Run the tests', 99, rows), undefined);
 });
 
-// CPU time, not wall time: the machine running the tests may be busy.
+// Only this thread's CPU: wall time includes a busy machine, and process CPU
+// also includes V8's background compilation and GC workers during cold runs.
 function cpuMs(work: () => void): number {
-  const start = process.cpuUsage();
+  const start = process.threadCpuUsage();
   work();
-  const used = process.cpuUsage(start);
+  const used = process.threadCpuUsage(start);
   return (used.user + used.system) / 1000;
 }
+
+test('link timing excludes CPU used by background workers', async () => {
+  const shared = new SharedArrayBuffer(4);
+  const flag = new Int32Array(shared);
+  const worker = new Worker(`
+    const { parentPort, workerData } = require('node:worker_threads');
+    const flag = new Int32Array(workerData);
+    parentPort.postMessage('ready');
+    Atomics.wait(flag, 0, 0);
+    const start = process.threadCpuUsage();
+    const deadline = performance.now() + 5000;
+    while (performance.now() < deadline) {
+      const used = process.threadCpuUsage(start);
+      if (used.user + used.system >= 150_000) break;
+    }
+    Atomics.store(flag, 0, 2);
+    Atomics.notify(flag, 0);
+  `, { eval: true, execArgv: [], workerData: shared });
+  try {
+    await once(worker, 'message');
+    const ms = cpuMs(() => {
+      Atomics.store(flag, 0, 1);
+      Atomics.notify(flag, 0);
+      while (Atomics.load(flag, 0) !== 2) {
+        assert.notEqual(Atomics.wait(flag, 0, 1, 10_000), 'timed-out');
+      }
+    });
+    assert.ok(ms < 100, `background worker counted as ${ms.toFixed(0)} ms of link work`);
+  } finally {
+    await worker.terminate();
+  }
+});
 
 test('a work link that quotes a closed link finds nothing, an unclosed one is just words', () => {
   const own = [
