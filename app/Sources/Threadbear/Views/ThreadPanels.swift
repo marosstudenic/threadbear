@@ -113,7 +113,6 @@ struct PinnedThreadView: View {
                 }
                 .layoutValue(key: PaneRole.self, value: .transcript)
                 ComposerView(thread: thread, session: session, controller: app.panelTranscript(for: threadId))
-                    .zIndex(1)
                     .layoutValue(key: PaneRole.self, value: .composer)
             }
         }
