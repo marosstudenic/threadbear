@@ -119,8 +119,11 @@ struct ComposerView: View {
         .padding(Self.padding)
         }
         .background { card(attention: needsYou) }
-        // The `/` menu, floating just over a thread's box, or under a new
-        // thread's, which sits mid-window under its heading (SlashCommandMenu).
+        }
+        // The `/` menu, floating just over a thread's box and the folder's
+        // action chips on its edge (which would otherwise draw over it), or
+        // under a new thread's, which sits mid-window under its heading
+        // (SlashCommandMenu).
         .overlay(alignment: thread == nil ? .bottomLeading : .topLeading) {
             if slashMenu.isShown {
                 let gap = SlashCommandMenu.height(rows: slashMenu.rows.count) + zoomed(8)
@@ -129,7 +132,6 @@ struct ComposerView: View {
                 }
                 .offset(y: thread == nil ? gap : -gap)
             }
-        }
         }
         // The transcript's reading column: 780 wide at most at 100%,
         // centred, with the same side insets once the window is narrower.
