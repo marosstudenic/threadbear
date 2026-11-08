@@ -687,6 +687,9 @@ test('a login with no settings.json yet: writing one is code, and a saved edit r
   const login = path.join(tmpDir(), 'Accounts', 'claude-9');
   put(path.join(login, '.claude.json'), '{}');
   const h = makeHarness(home, {}, {
+    // Not the real home: a home patch there that can't be followed all the
+    // way makes every write count as code, notes.json included.
+    panelsRoot: tmpDir(),
     accounts: new FakeAccounts([...ACCOUNTS, { id: 'claude-9', provider: 'claude', title: 'nine', configDir: login }]),
     patchTrust: new PatchTrust({ file: path.join(home, 'patch-trust.json'), claudeHome: tmpDir() }),
   });
