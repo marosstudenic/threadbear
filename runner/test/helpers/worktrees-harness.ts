@@ -82,7 +82,9 @@ export async function until(check: () => boolean, what: string, ms = PATIENCE_MS
 }
 
 export function harness(): Harness {
-  return makeHarness(undefined, {}, { actionShell: ['/bin/sh', '-c'], actionTimeoutMs: 10_000 });
+  // Not the real home's patches: one whose `when` waits on the network
+  // leaves a thread with no actions until it answers.
+  return makeHarness(undefined, {}, { actionShell: ['/bin/sh', '-c'], actionTimeoutMs: 10_000, panelsRoot: tmpDir() });
 }
 
 // Puts a git ahead of the real one on PATH that takes half a second over
