@@ -67,19 +67,33 @@ test('words found nowhere in the turn find nothing', () => {
   assert.equal(findStep('Run the tests', 99, rows), undefined);
 });
 
-// Only this thread's CPU: wall time includes a busy machine, and process CPU
-// also includes V8's background compilation and GC workers during cold runs.
+// CPU time, not wall time: the machine running the tests may be busy.
 // What the tests below may take (all but the last, which guards a steady
 // cost per link rather than a quadratic one). They take 20 ms or less on an
 // idle Mac, but a busy one ran one to 187 ms of CPU (a fork's update build,
 // 9 Nov), and the quadratic search they guard against froze a page for 15 s.
 const LIMIT = 1000;
 
-function cpuMs(work: () => void): number {
-  const start = process.threadCpuUsage();
-  work();
-  const used = process.threadCpuUsage(start);
-  return (used.user + used.system) / 1000;
+// The fewest milliseconds of this thread's CPU time the work took, out of up
+// to three goes. This thread's only, as the process's counts the garbage
+// collector's helper threads too (a 78 ms test once measured 119 ms of the
+// process's). And the best of three, as a busy machine still slows a thread
+// down, while the blowups these guard against cost seconds every time.
+// `make` builds fresh rows for each go, so an answer remembered from the
+// last one can't make it look cheap.
+function cpuMs(make: () => () => void, limit = LIMIT): number {
+  const now = () => {
+    const t = process.threadCpuUsage();
+    return (t.user + t.system) / 1000;
+  };
+  let best = Infinity;
+  for (let go = 0; go < 3 && best >= limit; go++) {
+    const work = make();
+    const start = now();
+    work();
+    best = Math.min(best, now() - start);
+  }
+  return best;
 }
 
 test('link timing excludes CPU used by background workers', async () => {
@@ -101,13 +115,14 @@ test('link timing excludes CPU used by background workers', async () => {
   `, { eval: true, execArgv: [], workerData: shared });
   try {
     await once(worker, 'message');
-    const ms = cpuMs(() => {
+    // One go only (no limit to retry under): the worker runs just once.
+    const ms = cpuMs(() => () => {
       Atomics.store(flag, 0, 1);
       Atomics.notify(flag, 0);
       while (Atomics.load(flag, 0) !== 2) {
         assert.notEqual(Atomics.wait(flag, 0, 1, 10_000), 'timed-out');
       }
-    });
+    }, Infinity);
     assert.ok(ms < 100, `background worker counted as ${ms.toFixed(0)} ms of link work`);
   } finally {
     await worker.terminate();
@@ -135,28 +150,34 @@ test('crafted rows of unclosed work links render quickly', () => {
     { seq: 4, role: 'assistant' as const, text: '[x](work:z) '.repeat(650) },
   ];
   // As written: 650 links to the same words.
-  let page = crafted();
   const same = cpuMs(() => {
-    escapeDestinations(page[3]!.text);
-    for (let i = 0; i < 650; i++) assert.equal(findStep('z', 4, page), undefined);
+    const page = crafted();
+    return () => {
+      escapeDestinations(page[3]!.text);
+      for (let i = 0; i < 650; i++) assert.equal(findStep('z', 4, page), undefined);
+    };
   });
   assert.ok(same < LIMIT, `650 links took ${same.toFixed(0)} ms`);
   // And 650 different ones, so remembering answers isn't what saves it.
-  page = crafted();
   const different = cpuMs(() => {
-    for (let i = 0; i < 650; i++) assert.equal(findStep(`z${i}`, 4, page), undefined);
+    const page = crafted();
+    return () => {
+      for (let i = 0; i < 650; i++) assert.equal(findStep(`z${i}`, 4, page), undefined);
+    };
   });
   assert.ok(different < LIMIT, `650 different links took ${different.toFixed(0)} ms`);
 });
 
 test('one long line of unclosed work links is read in one pass', () => {
   // Ten times the mirror's limit, to show the time grows with the length, not its square.
-  const page = [
-    { seq: 1, role: 'user' as const, text: 'Go' },
-    { seq: 2, role: 'assistant' as const, text: '](work:'.repeat(11_400) },
-    { seq: 3, role: 'assistant' as const, text: '[x](work:z)' },
-  ];
-  const ms = cpuMs(() => assert.equal(findStep('z', 3, page), undefined));
+  const ms = cpuMs(() => {
+    const page = [
+      { seq: 1, role: 'user' as const, text: 'Go' },
+      { seq: 2, role: 'assistant' as const, text: '](work:'.repeat(11_400) },
+      { seq: 3, role: 'assistant' as const, text: '[x](work:z)' },
+    ];
+    return () => assert.equal(findStep('z', 3, page), undefined);
+  });
   assert.ok(ms < LIMIT, `took ${ms.toFixed(0)} ms`);
 });
 
@@ -164,12 +185,14 @@ test('a page full of long rows and links has a bounded cost', () => {
   // The worst a page of 80 rows can be: 40 rows of the 8,000 characters the
   // mirror keeps that every search reads to the end, then 40 messages of as
   // many different links as fit.
-  const page: { seq: number; role: 'user' | 'assistant' | 'tool'; text: string }[] = [{ seq: 0, role: 'user', text: 'Go' }];
-  for (let i = 1; i <= 40; i++) page.push({ seq: i, role: 'tool', text: 'z '.repeat(4000) });
-  for (let i = 41; i <= 80; i++) page.push({ seq: i, role: 'assistant', text: '' });
   let found = 0;
   const ms = cpuMs(() => {
-    for (let m = 41; m <= 80; m++) for (let l = 0; l < 700; l++) if (findStep(`z q${m}-${l}`, m, page) !== undefined) found++;
+    const page: { seq: number; role: 'user' | 'assistant' | 'tool'; text: string }[] = [{ seq: 0, role: 'user', text: 'Go' }];
+    for (let i = 1; i <= 40; i++) page.push({ seq: i, role: 'tool', text: 'z '.repeat(4000) });
+    for (let i = 41; i <= 80; i++) page.push({ seq: i, role: 'assistant', text: '' });
+    return () => {
+      for (let m = 41; m <= 80; m++) for (let l = 0; l < 700; l++) if (findStep(`z q${m}-${l}`, m, page) !== undefined) found++;
+    };
   });
   assert.equal(found, 0);
   assert.ok(ms < LIMIT, `took ${ms.toFixed(0)} ms`);
@@ -183,18 +206,20 @@ test('a long link destination costs no more than a short one', () => {
   const long = 'z'.repeat(4000);
   assert.deepEqual(readLink(`work:${long}`), { kind: 'plain' });
   assert.deepEqual(readLink(`thread:${long}`), { kind: 'plain' });
-  const page = [
-    { seq: 1, role: 'user' as const, text: 'Go' },
-    { seq: 2, role: 'tool' as const, text: long },
-    { seq: 3, role: 'assistant' as const, text: '' },
-  ];
-  assert.equal(findStep(long, 3, page), undefined);
   const href = `work:${long}`;
   const ms = cpuMs(() => {
-    for (let i = 0; i < 80 * 660; i++) {
-      readLink(href);
-      findStep(long, 3, page);
-    }
+    const page = [
+      { seq: 1, role: 'user' as const, text: 'Go' },
+      { seq: 2, role: 'tool' as const, text: long },
+      { seq: 3, role: 'assistant' as const, text: '' },
+    ];
+    assert.equal(findStep(long, 3, page), undefined);
+    return () => {
+      for (let i = 0; i < 80 * 660; i++) {
+        readLink(href);
+        findStep(long, 3, page);
+      }
+    };
   });
   assert.ok(ms < LIMIT, `took ${ms.toFixed(0)} ms`);
   // Ordinary ones still read.
@@ -205,18 +230,20 @@ test('thousands of links to one long destination cost little more than the links
   // Codex, second look: 79 rows of `[r] ` 1,600 times with `[r]: work:` and a
   // destination just under the limit, so each link was decoded and normalised.
   const body = 'x%20'.repeat(249);
-  const page = [{ seq: 0, role: 'user' as const, text: 'Go' }, { seq: 1, role: 'tool' as const, text: 'Ran it' }];
-  for (let i = 2; i <= 80; i++) page.push({ seq: i, role: 'assistant' as const, text: `${'[r] '.repeat(1600)}\n\n[r]: work:${body}` } as never);
-  // A fresh copy of the destination for every link, as a renderer may hand over.
-  const hrefs = Array.from({ length: 1600 }, (_, i) => `work:${body}`.split('').join(''));
   const ms = cpuMs(() => {
-    for (let m = 2; m <= 80; m++) {
-      for (const href of hrefs) {
-        readLink(href);
-        const link = readLink(href);
-        if (link?.kind === 'step') findStep(link.quote, m, page);
+    const page = [{ seq: 0, role: 'user' as const, text: 'Go' }, { seq: 1, role: 'tool' as const, text: 'Ran it' }];
+    for (let i = 2; i <= 80; i++) page.push({ seq: i, role: 'assistant' as const, text: `${'[r] '.repeat(1600)}\n\n[r]: work:${body}` } as never);
+    // A fresh copy of the destination for every link, as a renderer may hand over.
+    const hrefs = Array.from({ length: 1600 }, () => `work:${body}`.split('').join(''));
+    return () => {
+      for (let m = 2; m <= 80; m++) {
+        for (const href of hrefs) {
+          readLink(href);
+          const link = readLink(href);
+          if (link?.kind === 'step') findStep(link.quote, m, page);
+        }
       }
-    }
-  });
+    };
+  }, 250);
   assert.ok(ms < 250, `took ${ms.toFixed(0)} ms for 126,400 links`);
 });
