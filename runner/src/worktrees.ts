@@ -1078,7 +1078,10 @@ async function landLocked(
         // One whose tb has gone never hears: move its branch here, as it
         // would have, or its next tb land would land a commit made empty
         // on purpose a second time (rebase keeps those).
-        if (!(await ownerWaiting(common, g.entry))) {
+        // One that landed as it was (first in the stack, on main already)
+        // is on what landed: a record of it would match its HEAD, and its
+        // next tb land would say it moved the branch.
+        if (g.entry.commit !== g.tip && !(await ownerWaiting(common, g.entry))) {
           writeLandedFor(common, g.entry.commit, g.tip);
           await moveGoneBranch(g.entry, g.tip);
         }
