@@ -125,7 +125,9 @@ import Testing
         ]
         for run in inputs {
             let seconds = cpuSeconds(run)
-            #expect(seconds < 0.1, "\(seconds) s")
+            // 0.3 s, not 0.1: a check run on a busy Mac at low priority took
+            // 0.102 s, and the blowups this guards against take seconds.
+            #expect(seconds < 0.3, "\(seconds) s")
         }
         // A picture or link in a code span is still left as written.
         #expect(MarkdownBlock.parse("`![a](b.png)` ![c](d.png)") == [.paragraph("`![a](b.png)`"), .image(alt: "c", src: "d.png")])
